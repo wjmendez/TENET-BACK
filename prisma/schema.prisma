@@ -1,0 +1,74 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Template {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  jsonLd      Json     // Esquema JSON-LD de la plantilla
+  variables   Json     // Lista de variables (ej: ["nombre", "apellido", ...])
+  filePath    String?  // Ruta al archivo de plantilla visual (opcional)
+  certificates Certificate[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+
+model Certificate {
+  id          String   @id @default(uuid())
+  credentialUuid String? @unique
+  template    Template @relation(fields: [templateId], references: [id])
+  templateId  String
+  data        Json     // Datos personalizados para el destinatario
+  status      CertificateStatus @default(PENDING)
+  filePath    String?  // Ruta al PDF/badge generado
+  hash        String?  // Hash calculado (SHA-256)
+  anchor      Anchor?  @relation(fields: [anchorId], references: [id])
+  anchorId    String?
+  merkleProof Json?    // [{position: 'left'|'right', hash: string}]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?  // Usuario que emitió
+  updatedBy   String?  // Última modificación
+
+  @@index([anchorId])
+  @@index([status])
+}
+
+model Anchor {
+  id          String   @id @default(uuid())
+  rootHash    String
+  txHash      String
+  blockchain  String   // Ej: "bitcoin", "ethereum"
+  status      AnchorStatus @default(PENDING)
+  certificates Certificate[]
+  createdAt   DateTime @default(now())
+  confirmedAt DateTime?
+  createdBy   String?  // Usuario que ancló
+  updatedBy   String?
+  updatedAt   DateTime? @default(now())
+}
+
+enum CertificateStatus {
+  PENDING
+  ISSUED
+  CANCELLED
+}
+
+enum AnchorStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
