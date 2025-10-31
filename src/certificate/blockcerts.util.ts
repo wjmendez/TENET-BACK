@@ -26,10 +26,6 @@ export function generateBlockcert({ recipientName, recipientEmail, course, date,
       name: recipientName,
       courseName: course
     },
-    credentialStatus: {
-      id: `${baseUrl}/revocationList.json`,
-      type: 'RevocationList'
-    },
     proof: {
       type: 'MerkleProof2019',
       created: issuanceDate,

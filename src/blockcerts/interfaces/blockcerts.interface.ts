@@ -4,6 +4,12 @@ export interface IssuerProfile {
   type: string;
   name: string;
   url: string;
+  publicKey: Array<{
+    id: string;
+    created?: string;
+    revoked?: string;
+    expires?: string;
+  }>;
   verificationMethod: Array<{
     id: string;
     type: string;

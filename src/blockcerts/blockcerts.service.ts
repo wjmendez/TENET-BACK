@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { Wallet } from 'ethers';
 import { IssuerProfile, RevocationList } from './interfaces/blockcerts.interface.js';
 import { CertificateService } from '../certificate/certificate.service.js';
 
@@ -13,8 +14,32 @@ export class BlockcertsService {
         return process.env.APP_URL ;
     }
 
+    private resolveIssuerAddress(): string {
+        if (process.env.ISSUER_BLOCKCHAIN_ADDRESS) {
+            return process.env.ISSUER_BLOCKCHAIN_ADDRESS;
+        }
+
+        const privateKey = process.env.ISSUER_PRIVATE_KEY || process.env.ETHEREUM_PRIVATE_KEY;
+        if (!privateKey) {
+            throw new Error('Unable to resolve issuer blockchain address. Set ISSUER_BLOCKCHAIN_ADDRESS or provide a private key.');
+        }
+
+        try {
+            const normalizedKey = privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`;
+            const wallet = new Wallet(normalizedKey);
+            return wallet.address;
+        } catch (error) {
+            throw new Error('Unable to derive issuer blockchain address from the configured private key.');
+        }
+    }
+
     async getIssuerProfile(): Promise<IssuerProfile> {
         const baseUrl = this.getBaseUrl();
+        const issuerAddress = this.resolveIssuerAddress();
+        const createdAt = process.env.ISSUER_KEY_CREATED_AT;
+        const revokedAt = process.env.ISSUER_KEY_REVOKED_AT;
+        const expiresAt = process.env.ISSUER_KEY_EXPIRES_AT;
+
         return {
             '@context': [
                 'https://www.w3.org/ns/credentials/v2',
@@ -30,6 +55,14 @@ export class BlockcertsService {
             type: 'Issuer',
             name: process.env.ISSUER_NAME || 'Cert Issuer',
             url: baseUrl,
+            publicKey: [
+                {
+                    id: `ecdsa-koblitz-pubkey:${issuerAddress}`,
+                    ...(createdAt ? { created: createdAt } : {}),
+                    ...(revokedAt ? { revoked: revokedAt } : {}),
+                    ...(expiresAt ? { expires: expiresAt } : {}),
+                },
+            ],
             verificationMethod: [
                 {
                     id: `${baseUrl}/issuer.json#key-1`,

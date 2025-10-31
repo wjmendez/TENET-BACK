@@ -4,6 +4,12 @@ import { BlockcertsService } from './blockcerts.service.js';
 describe('BlockcertsService', () => {
   let service: BlockcertsService;
 
+  beforeAll(() => {
+    process.env.APP_URL = process.env.APP_URL || 'http://localhost:3000';
+    process.env.ISSUER_BLOCKCHAIN_ADDRESS =
+      process.env.ISSUER_BLOCKCHAIN_ADDRESS || '0x0000000000000000000000000000000000000000';
+  });
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [BlockcertsService],
