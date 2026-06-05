@@ -1,11 +1,16 @@
 import { Module } from '@nestjs/common';
 import { BlockcertsController } from './blockcerts.controller.js';
-import { BlockcertsService } from './blockcerts.service.js';
-import { CertificateModule } from '../certificate/certificate.module.js';
+import { IssuerModule } from '../issuer/issuer.module.js';
 
 @Module({
-  imports: [CertificateModule],
+  imports: [IssuerModule],
   controllers: [BlockcertsController],
-  providers: [BlockcertsService],
 })
 export class BlockcertsModule {}
+
+
+
+
+
+
+

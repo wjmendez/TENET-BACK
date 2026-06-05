@@ -13,52 +13,371 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Template {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  jsonLd      Json     // Esquema JSON-LD de la plantilla
-  variables   Json     // Lista de variables (ej: ["nombre", "apellido", ...])
-  filePath    String?  // Ruta al archivo de plantilla visual (opcional)
-  certificates Certificate[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
 }
 
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
 
-model Certificate {
-  id          String   @id @default(uuid())
-  credentialUuid String? @unique
-  template    Template @relation(fields: [templateId], references: [id])
-  templateId  String
-  data        Json     // Datos personalizados para el destinatario
-  status      CertificateStatus @default(PENDING)
-  filePath    String?  // Ruta al PDF/badge generado
-  hash        String?  // Hash calculado (SHA-256)
-  anchor      Anchor?  @relation(fields: [anchorId], references: [id])
+enum DomainStatus {
+  PENDING
+  VERIFIED
+  ACTIVE
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum TenantPlanStatus {
+  ACTIVE
+  EXPIRED
+}
+
+model Tenant {
+  id        String        @id @default(uuid())
+  name      String
+  slug      String        @unique
+  status    TenantStatus  @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  branding         TenantBranding?
+  members          Membership[]
+  apiKeys          ApiKey[]
+  plans            TenantPlan[]
+  quotaUsage       QuotaUsage[]
+  verticals        Vertical[]
+  credentialTypes  CredentialType[]
+  credentialBundles CredentialBundle[]
+  credentialUpdates CredentialUpdate[]
+  issuers          Issuer[]
+  templates        Template[]
+  certificates     Certificate[]
+  anchors          Anchor[]
+  revocations      Revocation[]
+  statusLists      StatusList[]
+  nfts             NFT[]
+}
+
+model User {
+  id        String       @id @default(uuid())
+  email     String       @unique
+  name      String?
+  passwordHash String?
+  status    UserStatus   @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  memberships Membership[]
+}
+
+model Membership {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  role      String
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+}
+
+model TenantBranding {
+  tenantId       String   @id
+  logoUrl        String?
+  primaryColor   String?
+  secondaryColor String?
+  supportEmail   String?
+  subdomain      String?
+  customDomain   String?
+  domainStatus   DomainStatus @default(PENDING)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+model ApiKey {
+  id         String      @id @default(uuid())
+  tenantId   String
+  name       String
+  keyHash    String
+  keyPrefix  String
+  scopes     Json
+  status     ApiKeyStatus @default(ACTIVE)
+  createdAt  DateTime    @default(now())
+  lastUsedAt DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([keyPrefix])
+}
+
+model Plan {
+  id                   String   @id @default(uuid())
+  code                 String   @unique
+  version              Int      @default(1)
+  isActive             Boolean  @default(true)
+  monthlyIssuanceQuota Int
+  monthlyApiCallsQuota Int
+  rateLimitRps         Int
+  features             Json
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  tenants TenantPlan[]
+
+  @@index([isActive])
+}
+
+model TenantPlan {
+  id          String           @id @default(uuid())
+  tenantId    String
+  planId      String
+  periodStart DateTime
+  periodEnd   DateTime
+  status      TenantPlanStatus @default(ACTIVE)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  @@index([tenantId])
+  @@index([planId])
+  @@unique([tenantId, planId])
+}
+
+model QuotaUsage {
+  id                String   @id @default(uuid())
+  tenantId          String
+  period            String
+  issuedCount       Int      @default(0)
+  apiCallsCount     Int      @default(0)
+  verificationsCount Int     @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, period])
+  @@index([tenantId])
+}
+
+model Vertical {
+  id              String             @id @default(uuid())
+  tenantId        String
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  name            String             // "EdTech", "SportsTech", etc.
+  slug            String             // "edtech", "sportstech", etc.
+  description     String?
+  config          Json // Configuración específica de la vertical
+  isActive        Boolean            @default(true)
+  issuers         Issuer[]
+  templates       Template[]
+  bundles         CredentialBundle[]
+  credentialTypes CredentialType[]
+  certificates    Certificate[] // Nueva: Relación con Certificate
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([slug])
+  @@index([isActive])
+}
+
+model CredentialType {
+  id            String     @id @default(uuid())
+  tenantId      String
+  tenant        Tenant     @relation(fields: [tenantId], references: [id])
+  verticalId    String
+  vertical      Vertical   @relation(fields: [verticalId], references: [id])
+  name          String // "Diploma", "SmartMedal", etc.
+  type          String // VC_STATIC, VC_DYNAMIC, NFT_STATIC, NFT_DYNAMIC, BUNDLE
+  schema        Json? // JSON Schema para validación
+  displayConfig Json? // Configuración de visualización
+  updatePolicy  Json? // Política de actualización (para dinámicos)
+  isActive      Boolean    @default(true)
+  templates     Template[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([verticalId])
+  @@index([tenantId])
+  @@index([type])
+  @@index([isActive])
+}
+
+model CredentialBundle {
+  id          String        @id @default(uuid())
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id])
+  verticalId  String
+  vertical    Vertical      @relation(fields: [verticalId], references: [id])
+  recipientId String // Email, DID, o identificador del destinatario
+  bundleHash  String? // Hash del bundle completo
+  anchor      Anchor?       @relation(fields: [anchorId], references: [id])
   anchorId    String?
-  merkleProof Json?    // [{position: 'left'|'right', hash: string}]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdBy   String?  // Usuario que emitió
-  updatedBy   String?  // Última modificación
+  credentials Certificate[] // Relación con certificados del bundle
+  status      BundleStatus  @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  @@index([anchorId])
+  @@index([verticalId])
+  @@index([tenantId])
+  @@index([recipientId])
   @@index([status])
 }
 
+enum BundleStatus {
+  PENDING
+  ISSUED
+  CANCELLED
+}
+
+model CredentialUpdate {
+  id            String      @id @default(uuid())
+  tenantId      String
+  tenant        Tenant       @relation(fields: [tenantId], references: [id])
+  credentialId  String
+  credential    Certificate @relation(fields: [credentialId], references: [id])
+  updateType    String // EVENT_DRIVEN, TIME_BASED, OWNERSHIP_TRANSFER
+  updateData    Json // Datos de la actualización
+  previousState Json? // Estado anterior (para rollback)
+  appliedAt     DateTime    @default(now())
+  appliedBy     String?
+  createdAt     DateTime    @default(now())
+
+  @@index([credentialId])
+  @@index([tenantId])
+  @@index([updateType])
+  @@index([appliedAt])
+}
+
+model Issuer {
+  id                String     @id @default(uuid())
+  tenantId          String
+  tenant            Tenant     @relation(fields: [tenantId], references: [id])
+  did               String     // DID único: did:web:example.com:issuers:uuid
+  name              String
+  url               String?
+  logo              String?
+  publicKeyJwk      Json // Clave pública en formato JWK
+  privateKeyHex     String? // Clave privada legacy (evitar en nuevos issuers)
+  encryptedPrivateKey String? // Clave privada cifrada (local KMS)
+  keyAlgorithm      String? // Algoritmo de clave (ej: Ed25519)
+  keyVersion        Int?    // Version de clave para rotacion
+  kmsType           String? // Tipo de KMS (ej: local)
+  blockchainAddress String? // Dirección de blockchain si aplica
+  verticalId        String? // Nueva: Relación con Vertical
+  vertical          Vertical?  @relation(fields: [verticalId], references: [id])
+  templates         Template[]
+  revocations       Revocation[]
+  statusLists       StatusList[]
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([tenantId, did])
+  @@index([tenantId])
+  @@index([did])
+  @@index([verticalId])
+}
+
+model Template {
+  id               String          @id @default(uuid())
+  tenantId         String
+  tenant           Tenant          @relation(fields: [tenantId], references: [id])
+  name             String
+  description      String?
+  jsonLd           Json? // Esquema JSON-LD de la plantilla (incluye canvas en credentialSubject.certificate.design)
+  variables        Json? // Lista de variables (opcional, se extrae del jsonLd)
+  issuer           Issuer?         @relation(fields: [issuerId], references: [id])
+  issuerId         String?
+  verticalId       String? // Nueva: Relación con Vertical
+  vertical         Vertical?       @relation(fields: [verticalId], references: [id])
+  credentialTypeId String? // Nueva: Relación con CredentialType
+  credentialType   CredentialType? @relation(fields: [credentialTypeId], references: [id])
+  certificates     Certificate[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([issuerId])
+  @@index([tenantId])
+  @@index([verticalId])
+  @@index([credentialTypeId])
+}
+
+model Certificate {
+  id             String             @id @default(uuid())
+  tenantId       String
+  tenant         Tenant             @relation(fields: [tenantId], references: [id])
+  credentialUuid String?            @unique
+  template       Template           @relation(fields: [templateId], references: [id])
+  templateId     String
+  data           Json // Datos personalizados para el destinatario
+  status         CertificateStatus  @default(PENDING)
+  hash           String? // Hash calculado (SHA-256)
+  anchor         Anchor?            @relation(fields: [anchorId], references: [id])
+  anchorId       String?
+  statusListId   String?
+  statusList     StatusList?        @relation(fields: [statusListId], references: [id])
+  statusListIndex Int?
+  revokedAt      DateTime?
+  revocationReason String?
+  bundleId       String? // Nueva: Relación con CredentialBundle
+  bundle         CredentialBundle?  @relation(fields: [bundleId], references: [id])
+  verticalId     String? // Nueva: Relación directa con Vertical
+  vertical       Vertical?          @relation(fields: [verticalId], references: [id])
+  issuerDid      String? // Nueva: DID de Veramo del usuario que emite
+  updatePolicy   Json? // Nueva: Política de actualización para dinámicos
+  updates        CredentialUpdate[] // Nueva: Historial de actualizaciones
+  merkleProof    Json? // [{position: 'left'|'right', hash: string}]
+  nft            NFT? // Relación 1:1 opcional con NFT
+  revocation     Revocation?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  createdBy      String? // Usuario que emitió
+  updatedBy      String? // Última modificación
+
+  @@index([anchorId])
+  @@index([tenantId])
+  @@index([status])
+  @@index([bundleId])
+  @@index([verticalId])
+  @@index([issuerDid])
+}
+
 model Anchor {
-  id          String   @id @default(uuid())
-  rootHash    String
-  txHash      String
-  blockchain  String   // Ej: "bitcoin", "ethereum"
-  status      AnchorStatus @default(PENDING)
+  id           String             @id @default(uuid())
+  tenantId     String
+  tenant       Tenant             @relation(fields: [tenantId], references: [id])
+  rootHash     String
+  txHash       String
+  blockchain   String // Ej: "bitcoin", "ethereum"
+  chainNetworkId String?
+  chainNetwork   ChainNetwork?     @relation(fields: [chainNetworkId], references: [id])
+  status       AnchorStatus       @default(PENDING)
   certificates Certificate[]
-  createdAt   DateTime @default(now())
-  confirmedAt DateTime?
-  createdBy   String?  // Usuario que ancló
-  updatedBy   String?
-  updatedAt   DateTime? @default(now())
+  nfts         NFT[] // NFTs anclados en este batch
+  bundles      CredentialBundle[] // Nueva: Bundles anclados
+  createdAt    DateTime           @default(now())
+  confirmedAt  DateTime?
+  createdBy    String? // Usuario que ancló
+  updatedBy    String?
+  updatedAt    DateTime?          @default(now())
+
+  @@index([chainNetworkId])
+  @@index([tenantId])
 }
 
 enum CertificateStatus {
@@ -67,8 +386,105 @@ enum CertificateStatus {
   CANCELLED
 }
 
+enum RevocationStatus {
+  ACTIVE
+  REINSTATED
+}
+
+model Revocation {
+  id            String           @id @default(uuid())
+  tenantId      String
+  tenant        Tenant           @relation(fields: [tenantId], references: [id])
+  issuerId      String
+  issuer        Issuer           @relation(fields: [issuerId], references: [id])
+  certificateId String           @unique
+  certificate   Certificate      @relation(fields: [certificateId], references: [id])
+  revokedAt     DateTime
+  reason        String?
+  status        RevocationStatus @default(ACTIVE)
+  createdBy     String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([issuerId, status, revokedAt])
+  @@index([tenantId])
+}
+
+model StatusList {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  issuerId      String
+  issuer        Issuer   @relation(fields: [issuerId], references: [id])
+  statusPurpose String
+  encodedList   String
+  listSize      Int      @default(100000)
+  nextIndex     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  certificates  Certificate[]
+
+  @@index([tenantId])
+  @@index([issuerId])
+  @@index([statusPurpose])
+}
+
 enum AnchorStatus {
   PENDING
   CONFIRMED
   FAILED
+}
+
+model ChainNetwork {
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  displayName  String
+  veramoPlugin String
+  chainId      String?
+  rpcUrl       String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  anchors      Anchor[]
+
+  @@index([isActive])
+}
+
+model NFT {
+  id              String      @id @default(uuid())
+  tenantId        String
+  tenant          Tenant      @relation(fields: [tenantId], references: [id])
+  tokenId         String      @unique // Token ID en blockchain (BigInt como string)
+  certificate     Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+  certificateId   String      @unique
+  contractAddress String // Dirección del contrato NFT
+  ownerAddress    String // Dirección del propietario actual
+  metadataURI     String? // IPFS URI (ipfs://...)
+  ipfsHash        String? // CID de IPFS
+  txHash          String? // Hash de la transacción de mint
+  status          NFTStatus   @default(PENDING)
+  anchor          Anchor?     @relation(fields: [anchorId], references: [id])
+  anchorId        String? // ID del anclaje (si fue anclado en batch)
+  hash            String? // Hash del NFT para anclaje (SHA-256)
+  merkleProof     Json? // Proof de Merkle para verificación
+  metadataHistory Json? // Nueva: Historial de actualizaciones de metadata
+  updatePolicy    Json? // Nueva: Política de actualización dinámica
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([certificateId])
+  @@index([tenantId])
+  @@index([tokenId])
+  @@index([ownerAddress])
+  @@index([status])
+  @@index([anchorId])
+}
+
+enum NFTStatus {
+  PENDING
+  MINTED
+  TRANSFERRED
+  BURNED
 }

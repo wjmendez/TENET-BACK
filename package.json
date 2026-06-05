@@ -17,11 +17,14 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
-    "postbuild": "mkdir -p dist/contexts && cp contexts/blockcerts-v3.1.json dist/contexts/"
+    "test:e2e": "node --experimental-vm-modules ./node_modules/.bin/jest --config ./test/jest-e2e.json",
+    "postbuild": "mkdir -p dist/contexts && cp contexts/blockcerts-v3.1.json dist/contexts/ && cp -r public dist/public"
   },
   "dependencies": {
     "@blockcerts/cert-verifier-js": "^6.33.1",
+    "@digitalbazaar/ed25519-signature-2020": "^5.4.0",
+    "@digitalbazaar/ed25519-verification-key-2020": "^4.2.0",
+    "@digitalbazaar/x25519-key-agreement-key-2020": "^3.0.1",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^8.2.0",
     "@nestjs/common": "^11.0.1",
@@ -31,23 +34,32 @@
     "@nestjs/platform-fastify": "^11.1.6",
     "@nestjs/swagger": "^11.2.0",
     "@prisma/client": "^6.16.2",
+    "@veramo/core": "^6.0.0",
+    "@veramo/credential-ld": "^6.0.0",
+    "@veramo/credential-w3c": "^6.0.0",
+    "@veramo/did-manager": "^6.0.0",
+    "@veramo/did-provider-key": "^6.0.0",
+    "@veramo/did-provider-web": "^6.0.0",
+    "@veramo/did-resolver": "^6.0.0",
+    "@veramo/key-manager": "^6.0.0",
+    "@veramo/kms-local": "^6.0.0",
     "bs58": "^6.0.0",
     "bullmq": "^5.58.5",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "fastify": "^5.6.0",
-    "fastify-swagger": "^5.1.1",
     "ioredis": "^5.7.0",
     "jsdom": "^27.0.0",
+    "jose": "^5.3.0",
     "json-canonicalize": "^2.0.0",
     "jsonld": "^8.3.3",
     "node-fetch": "^3.3.2",
     "pino": "^9.9.5",
-    "xhr2": "^0.2.1",
     "prisma": "^6.16.2",
     "rdf-canonize": "^4.0.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "xhr2": "^0.2.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -57,6 +69,7 @@
     "@nestjs/testing": "^11.0.1",
     "@nomicfoundation/hardhat-ignition": "^3.0.3",
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^3.0.0",
+    "@openzeppelin/contracts": "^4.9.6",
     "@types/chai": "^4.3.20",
     "@types/chai-as-promised": "^8.0.2",
     "@types/express": "^5.0.0",
@@ -100,6 +113,9 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "type": "module"
 }

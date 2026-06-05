@@ -6,15 +6,16 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
 import * as dotenv from 'dotenv';
-import { PrismaClient, CertificateStatus, AnchorStatus } from '@prisma/client';
+import { CertificateStatus, AnchorStatus } from '@prisma/client';
 import { Encoder } from '@vaultie/lds-merkle-proof-2019';
 import { anchorToSepolia } from '../certificate/eth-anchor-anchorcontract.util.js';
+import { getTenantId } from '../common/tenant/tenant-context.js';
+import { prisma } from '../common/prisma/prisma.js';
 // note: we use jsonld.normalize(..., { algorithm: 'URDNA2015', format: 'application/n-quads' })
 // to produce deterministic N-Quads suitable for SHA-256 hashing (what the verifier expects)
 
 dotenv.config();
 
-const prisma = new PrismaClient();
 const logger = pino({ name: 'AnchorService' });
 
 /* -------------------------- utilidades de hashing -------------------------- */
@@ -23,11 +24,11 @@ function sha256Hex(s: string) {
   return crypto.createHash('sha256').update(s).digest('hex'); // hex minúsculo
 }
 
-function strip0x(h?: string | null) {
+export function strip0x(h?: string | null) {
   return (h || '').toLowerCase().replace(/^0x/, '');
 }
 
-function ensure0x(h: string) {
+export function ensure0x(h: string) {
   const v = h.toLowerCase();
   return v.startsWith('0x') ? v : `0x${v}`;
 }
@@ -47,13 +48,16 @@ function deepSort(obj: any): any {
   return obj;
 }
 
-function resolveAnchorEncoding(blockchain?: string) {
+export function resolveAnchorEncoding(blockchain?: string) {
   const normalized = (blockchain || '').toLowerCase();
   if (normalized === 'mocknet') {
     return { chain: 'mocknet', network: 'mocknet' };
   }
   if (normalized === 'sepolia') {
     return { chain: 'eth', network: 'sepolia' };
+  }
+  if (normalized === 'besu' || normalized === 'local') {
+    return { chain: 'eth', network: 'besu' };
   }
   if (normalized === 'goerli') {
     return { chain: 'eth', network: 'goerli' };
@@ -70,7 +74,40 @@ function resolveAnchorEncoding(blockchain?: string) {
   return { chain: 'eth', network: normalized || 'mainnet' };
 }
 
-function buildBlinkAnchor(chainKey: string, networkKey: string, txHex: string) {
+function resolveAnchorEncodingFromNetwork(chainNetworkSlug?: string | null, blockchain?: string | null) {
+  const normalized = (chainNetworkSlug || blockchain || '').toLowerCase();
+  const mapped = (() => {
+    if (!normalized) return undefined;
+    if (normalized === 'eth-sepolia') return 'sepolia';
+    if (normalized === 'eth-mainnet') return 'mainnet';
+    if (normalized === 'polygon') return 'polygon';
+    if (normalized === 'polygon-mumbai') return 'mumbai';
+    if (normalized === 'lacchain') return 'lacchain';
+    if (normalized === 'local') return 'besu';
+    if (normalized === 'testnet') return 'sepolia';
+    return normalized;
+  })();
+  return resolveAnchorEncoding(mapped || undefined);
+}
+
+function resolveChainNetworkSlug(input: string) {
+  const normalized = (input || '').toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'sepolia') return 'eth-sepolia';
+  if (normalized === 'testnet') return 'eth-sepolia';
+  if (normalized === 'local') return 'besu';
+  return normalized;
+}
+
+function resolveAnchoringNetwork(input: string) {
+  const normalized = (input || '').toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'eth-sepolia' || normalized === 'testnet') return 'sepolia';
+  if (normalized === 'local') return 'besu';
+  return normalized;
+}
+
+export function buildBlinkAnchor(chainKey: string, networkKey: string, txHex: string) {
   return `blink:${chainKey}:${networkKey}:${txHex}`;
 }
 
@@ -112,17 +149,70 @@ const customLoader = (url: string) => {
   return jsonld.documentLoaders.node()(url);
 };
 
-async function sha256Canonical(data: any): Promise<Buffer> {
+export async function sha256Canonical(data: any): Promise<Buffer> {
   // Clona para no mutar
   const clone = JSON.parse(JSON.stringify(data));
 
-  // Excluye `proof` del payload hashable (estándar en Blockcerts)
+  // Excluye propiedades que no están en el contexto JSON-LD estándar de Blockcerts
+  // - `proof`: estándar en Blockcerts (no se incluye en el hash)
+  // - `display`: solo para presentación visual (formato W3C), no afecta la verificación
+  // - `displayHtml`: formato antiguo, también se excluye
+  // - `certificate`: metadata personalizada que no está en el contexto estándar
+  // NOTA: `achievement` SÍ es parte del estándar Open Badges y DEBE incluirse en el hash
   if (clone && typeof clone === 'object') {
     delete clone.proof;
+
+    // Limpiar credentialSubject de propiedades no estándar
+    if (clone.credentialSubject && typeof clone.credentialSubject === 'object') {
+      delete clone.credentialSubject.display;
+      delete clone.credentialSubject.displayHtml;
+
+      // Excluir certificate completo (version, metadata, design) - no está en el contexto estándar
+      delete clone.credentialSubject.certificate;
+
+      // Excluir achievement y courseName para evitar problemas de contexto/hash
+      // Estos campos se mostrarán visualmente a través de 'display'
+      if (clone.credentialSubject.achievement) delete clone.credentialSubject.achievement;
+      if (clone.credentialSubject.courseName) delete clone.credentialSubject.courseName;
+
+    }
+
+    // SANITIZAR CONTEXTO: Mantener solo los contextos estándar + definiciones locales en objetos.
+    if (Array.isArray(clone['@context'])) {
+      const filtered = clone['@context'].filter(c =>
+        typeof c === 'object' ||
+        c === 'https://www.w3.org/2018/credentials/v1' ||
+        c === 'https://w3id.org/blockcerts/v3' ||
+        c === 'https://w3id.org/blockcerts/v3.1'
+      );
+
+      // Asegurar definiciones para display/displayHtml para evitar campos unmapped
+      const localObjIndex = filtered.findIndex((c) => typeof c === 'object');
+      const displayMapping = {
+        display: 'https://w3id.org/blockcerts#display',
+        displayHtml: 'https://w3id.org/blockcerts#displayHtml',
+        content: 'https://w3id.org/blockcerts#displayContent',
+        contentMediaType: 'https://w3id.org/blockcerts#displayContentMediaType'
+      };
+      if (localObjIndex >= 0) {
+        filtered[localObjIndex] = { ...(filtered[localObjIndex] as any), ...displayMapping };
+      } else {
+        filtered.push(displayMapping);
+      }
+
+      // Añadir @vocab de respaldo para propiedades no mapeadas (igual que cert-verifier-js)
+      const hasVocab = filtered.some((c) => typeof c === 'object' && c['@vocab']);
+      if (!hasVocab) {
+        filtered.push({ '@vocab': 'http://fallback.org/' });
+      }
+
+      clone['@context'] = filtered;
+    }
   }
 
   // Use jsonld.normalize to produce N-Quads using URDNA2015
   // This yields the deterministic representation the verifier uses.
+  // Nota: jsonld.normalize internamente hace expand, por lo que necesitamos limpiar antes
   const nquads = await jsonld.normalize(clone, {
     algorithm: 'URDNA2015',
     format: 'application/n-quads',
@@ -149,31 +239,27 @@ async function sha256Canonical(data: any): Promise<Buffer> {
 
 /* ------------------------- merkle con rutas left/right ------------------------- */
 
-function buildMerkleWithDirectionalPaths(leaves: Buffer[]): {
+export function buildMerkleWithDirectionalPaths(leaves: Buffer[]): {
   root: string; // hex minúsculo sin 0x
   proofByLeafHex: Record<string, Array<{ left?: string; right?: string }>>;
 } {
   if (!leaves.length) throw new Error('No hay hojas para el árbol de Merkle');
 
-  let level: string[] = leaves.map((b) => b.toString('hex'));
-  const levels: string[][] = [level];
+  // Usar buffers y concatenar bytes (no strings) para que coincida con cert-verifier-js
+  let level: Buffer[] = [...leaves];
+  const levels: Buffer[][] = [level];
 
   while (level.length > 1) {
-    const next: string[] = [];
+    const next: Buffer[] = [];
     for (let i = 0; i < level.length; i += 2) {
-      if (i + 1 < level.length) {
-        // parent = sha256(left||right)
-        next.push(sha256Hex(level[i] + level[i + 1]));
-      } else {
-  // impar: duplicamos el último (no lo promovemos)
-  // parent = sha256(last||last)
-  next.push(sha256Hex(level[i] + level[i]));
-      }
+      const left = level[i];
+      const right = i + 1 < level.length ? level[i + 1] : level[i]; // duplicar última si impar
+      next.push(crypto.createHash('sha256').update(Buffer.concat([left, right])).digest());
     }
     levels.push(next);
     level = next;
   }
-  const root = levels[levels.length - 1][0];
+  const root = levels[levels.length - 1][0].toString('hex');
 
   const proofByLeafHex: Record<string, Array<{ left?: string; right?: string }>> = {};
   const leafHexes = leaves.map((l) => l.toString('hex'));
@@ -188,8 +274,14 @@ function buildMerkleWithDirectionalPaths(leaves: Buffer[]): {
       const siblingIndex = isLeft ? pos + 1 : pos - 1;
 
       if (siblingIndex < current.length) {
-        const sib = current[siblingIndex];
+        const sib = current[siblingIndex].toString('hex');
         // si soy left, sibling va a la derecha (right), y viceversa
+        path.push(isLeft ? { right: sib } : { left: sib });
+      } else if (current.length === 1) {
+        // Árbol de un solo nodo: sin path
+      } else {
+        // caso impar duplicado: sibling es el mismo nodo
+        const sib = current[pos].toString('hex');
         path.push(isLeft ? { right: sib } : { left: sib });
       }
       pos = Math.floor(pos / 2);
@@ -212,11 +304,18 @@ export class AnchorService {
    *   type, merkleRoot, targetHash, proofValue(Base58), anchors([{ type:'ETHData', value: <txid> }])
    */
   async approveAndAnchor(certificateIds: string[], blockchain: string) {
+    const tenantId = getTenantId();
     if (!Array.isArray(certificateIds) || certificateIds.length === 0) {
       throw new Error('certificateIds no puede estar vacío');
     }
 
     const chunkSize = 100;
+    const normalizedBlockchain = (blockchain || '').toLowerCase();
+    const anchoringNetwork = resolveAnchoringNetwork(normalizedBlockchain);
+    const chainNetworkSlug = resolveChainNetworkSlug(normalizedBlockchain);
+    const chainNetwork = chainNetworkSlug
+      ? await prisma.chainNetwork.findUnique({ where: { slug: chainNetworkSlug } })
+      : null;
     const anchors: Awaited<ReturnType<typeof prisma.anchor.create>>[] = [];
 
     for (let i = 0; i < certificateIds.length; i += chunkSize) {
@@ -224,7 +323,7 @@ export class AnchorService {
 
       // 1) Cargar certificados PENDING
       const certs = await prisma.certificate.findMany({
-        where: { id: { in: chunkIds }, status: CertificateStatus.PENDING },
+        where: { id: { in: chunkIds }, status: CertificateStatus.PENDING, tenantId },
       });
       if (certs.length === 0) {
         logger.warn({ chunkIds }, 'No hay certificados PENDING en este chunk');
@@ -236,11 +335,11 @@ export class AnchorService {
         console.log('==== DEBUG: Exported credential (no proof) for each cert ===');
       }
       const leaves: Buffer[] = await Promise.all(certs.map((c, idx) => {
-        if (process.env.DEBUG_CANON === '1') {
+        if (process.env.DEBUG_CANON === '1' || true) { // Forzamos debug
           const clone = JSON.parse(JSON.stringify(c.data));
           delete clone.proof;
-          console.log(`Credential #${idx} (no proof):`);
-          console.dir(clone, { depth: 10 });
+          console.log(`[ANCHOR] Credential #${idx} to be hashed:`);
+          console.log(JSON.stringify(clone, null, 2));
         }
         return sha256Canonical(c.data);
       }));
@@ -267,19 +366,44 @@ export class AnchorService {
 
       // 4) Anclar root y obtener txHash (0x...)
       let txHash: string;
-      if (blockchain === 'sepolia') {
+      if (anchoringNetwork === 'sepolia' || anchoringNetwork === 'besu') {
+        // Validar variables de entorno requeridas
+        if (!process.env.ETHEREUM_PRIVATE_KEY) {
+          throw new Error('ETHEREUM_PRIVATE_KEY no está configurada en las variables de entorno');
+        }
+
         try {
+          // Para Besu, usar BESU_RPC_URL si está definido, sino ETHEREUM_RPC_URL
+          const rpcUrl = anchoringNetwork === 'besu'
+            ? (process.env.BESU_RPC_URL || process.env.ETHEREUM_RPC_URL || 'http://localhost:8545')
+            : (process.env.ETHEREUM_RPC_URL || (() => {
+              throw new Error('ETHEREUM_RPC_URL no está configurada en las variables de entorno');
+            })());
+
+          logger.info({ rpcUrl, blockchain: normalizedBlockchain }, 'Conectando a blockchain');
+
+          // Para Besu local, no esperar confirmaciones (más rápido)
+          // Para Sepolia, esperar 1 confirmación
+          const isLocalNetwork = anchoringNetwork === 'besu';
           txHash = await anchorToSepolia({
             merkleRoot: root, // hex sin 0x
-            privateKey: process.env.ETHEREUM_PRIVATE_KEY!,
-            rpcUrl: process.env.ETHEREUM_RPC_URL!,
+            privateKey: process.env.ETHEREUM_PRIVATE_KEY,
+            rpcUrl: rpcUrl,
             dataSinkAddress: process.env.ETHEREUM_DATA_SINK,
+            waitForConfirmations: isLocalNetwork ? 0 : 1, // 0 para local, 1 para Sepolia
           });
-          logger.info({ txHash }, 'Transacción enviada');
+          logger.info({ txHash, blockchain: anchoringNetwork }, 'Transacción enviada');
         } catch (err: any) {
           logger.error(
-            { err: err?.message || err },
-            'Fallo anclando en sepolia; no se generará txHash mock'
+            {
+              err: err?.message || err,
+              stack: err?.stack,
+              blockchain: anchoringNetwork,
+              rpcUrl: anchoringNetwork === 'besu'
+                ? (process.env.BESU_RPC_URL || process.env.ETHEREUM_RPC_URL || 'http://localhost:8545')
+                : process.env.ETHEREUM_RPC_URL
+            },
+            `Fallo anclando en ${anchoringNetwork}`
           );
           throw new Error(`Ethereum anchoring failed: ${err?.message || err}`);
         }
@@ -292,62 +416,118 @@ export class AnchorService {
       const normalizedRoot = strip0x(root);
       const normalizedTx = strip0x(txHash);
 
-      const [createdAnchor] = await prisma.$transaction([
-        prisma.anchor.create({
-          data: {
-            rootHash: normalizedRoot,   // guardamos sin 0x
-            txHash: normalizedTx,       // guardamos sin 0x
-            blockchain,
-            status: AnchorStatus.CONFIRMED, // en prod, PENDING hasta N confirmaciones
-            certificates: { connect: certs.map((c) => ({ id: c.id })) },
-          },
-        }),
-        ...certs.map((c, idx) => {
+      // Obtener verticales de todos los certificados antes de la transacción
+      const certsWithVertical = await Promise.all(
+        certs.map((c) =>
+          prisma.certificate.findFirst({
+            where: { id: c.id, tenantId },
+            include: { vertical: true },
+          }),
+        ),
+      );
+
+      const createdAnchor = await prisma.anchor.create({
+        data: {
+          tenantId,
+          rootHash: normalizedRoot,   // guardamos sin 0x
+          txHash: normalizedTx,       // guardamos sin 0x
+          blockchain,
+          ...(chainNetwork?.id ? { chainNetworkId: chainNetwork.id } : {}),
+          status: AnchorStatus.CONFIRMED, // en prod, PENDING hasta N confirmaciones
+          certificates: { connect: certs.map((c) => ({ id: c.id })) },
+        },
+      });
+
+      await Promise.all(
+        certs.map((c, idx) => {
           const leafHex = leaves[idx].toString('hex'); // targetHash (hex minúsculo)
           const path = proofByLeafHex[leafHex] || [];
+          const certWithVertical = certsWithVertical[idx];
+          
+          const isEdTech = certWithVertical?.vertical?.slug === 'edtech';
+          
+          // Solo EdTech usa MerkleProof2019 (Blockcerts)
+          let proofPayload: any = null;
+          if (isEdTech) {
+            // Obtener el DID del issuer desde el certificado
+            // Si el certificado tiene issuerDid, usarlo; si no, construir desde issuer.id del blockcert
+            let issuerDid: string | null = c.issuerDid || null;
+            
+            // Si no hay issuerDid en el certificado, intentar extraerlo del blockcert
+            if (!issuerDid && c.data) {
+              const blockcert = c.data as any;
+              if (blockcert.issuer) {
+                if (typeof blockcert.issuer === 'string') {
+                  issuerDid = blockcert.issuer;
+                } else if (blockcert.issuer.id) {
+                  issuerDid = blockcert.issuer.id;
+                }
+              }
+            }
+            
+            // Construir verificationMethod usando el DID si está disponible
+            // IMPORTANTE: Debe coincidir EXACTAMENTE con el formato del Issuer Profile
+            // El Issuer Profile ahora usa: verificationMethod[0].id = ${did}#key-1 (forzado)
+            // Los certificados también usan: ${did}#key-1
+            // Esto asegura que ambos coincidan
+            let verificationMethod: string;
+            if (issuerDid && issuerDid.startsWith('did:')) {
+              // Usar el DID directamente: did:web:domain:issuers:issuerId#key-1
+              // NOTA: Ahora el Issuer Profile también usa 'key-1' forzado, así que coinciden
+              verificationMethod = `${issuerDid}#key-1`;
+            } else {
+              // Fallback a URL del issuer.json (compatibilidad con certificados antiguos)
+              verificationMethod = `${appUrl}/issuer.json#key-1`;
+            }
+            
+            // Codificar path+root+target en Base58 (MerkleProof2019)
+            const txWithPrefix = ensure0x(normalizedTx);
+            const { chain: chainKey, network: networkKey } = resolveAnchorEncodingFromNetwork(
+              chainNetwork?.slug,
+              blockchain
+            );
+            const txHex = strip0x(txWithPrefix);
+            const proofData = {
+              merkleRoot: normalizedRoot,
+              targetHash: leafHex,
+              anchors: [buildBlinkAnchor(chainKey, networkKey, txHex)], // string requerido por el encoder
+              path, // [{left},{right},...]
+            };
+            const encoder = new Encoder(proofData);
+            const proofValueBase58 = encoder.encode().toString(); // Base58
 
-          // Codificar path+root+target en Base58 (MerkleProof2019)
-          const txWithPrefix = ensure0x(normalizedTx);
-          const { chain: chainKey, network: networkKey } = resolveAnchorEncoding(blockchain);
-          const txHex = strip0x(txWithPrefix);
-          const proofData = {
-            merkleRoot: normalizedRoot,
-            targetHash: leafHex,
-            anchors: [buildBlinkAnchor(chainKey, networkKey, txHex)], // string requerido por el encoder
-            path, // [{left},{right},...]
-          };
-          const encoder = new Encoder(proofData);
-          const proofValueBase58 = encoder.encode().toString(); // Base58
-
-          // Estructura de proof que consume cert-verifier-js
-          const proofPayload: any = {
-            type: 'MerkleProof2019',
-            created: new Date().toISOString(),
-            proofPurpose: 'assertionMethod',
-            verificationMethod: `${appUrl}/issuer.json#key-1`,
-            merkleRoot: normalizedRoot,
-            targetHash: leafHex,
-            proofValue: proofValueBase58,
-            anchors: [
-              {
-                type: 'ETHEREUM_SEPOLIA',
-                sourceId: txWithPrefix,
-                value: txWithPrefix, // mantener `value` por compatibilidad
-              },
-            ],
-          };
+            // Estructura de proof que consume cert-verifier-js (solo para EdTech)
+            proofPayload = {
+              type: 'MerkleProof2019',
+              created: new Date().toISOString(),
+              proofPurpose: 'assertionMethod',
+              verificationMethod: verificationMethod, // Usar DID si está disponible
+              merkleRoot: normalizedRoot,
+              targetHash: leafHex,
+              proofValue: proofValueBase58,
+              anchors: [
+                {
+                  type: anchoringNetwork === 'besu'
+                    ? 'ETHEREUM_BESU'
+                    : 'ETHEREUM_SEPOLIA',
+                  sourceId: txWithPrefix,
+                  value: txWithPrefix, // mantener `value` por compatibilidad
+                },
+              ],
+            };
+          }
 
           return prisma.certificate.update({
             where: { id: c.id },
             data: {
               status: CertificateStatus.ISSUED,
               hash: leafHex,
-              merkleProof: proofPayload,
+              merkleProof: proofPayload, // null para verticales que no usan Blockcerts
               anchorId: undefined, // la relación se establece con connect arriba
             },
           });
         }),
-      ]);
+      );
 
       anchors.push(createdAnchor);
     }
@@ -359,6 +539,10 @@ export class AnchorService {
   }
 
   async findAll() {
-    return prisma.anchor.findMany({ include: { certificates: true } });
+    const tenantId = getTenantId();
+    return prisma.anchor.findMany({
+      where: { tenantId },
+      include: { certificates: true, chainNetwork: true },
+    });
   }
 }

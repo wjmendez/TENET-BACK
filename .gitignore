@@ -1,58 +1,157 @@
-# compiled output
-/dist
-/node_modules
-/build
+# ============================================
+# Dependencies
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
 
-# Logs
-logs
+# ============================================
+# Compiled Output (NestJS / TypeScript)
+# ============================================
+/dist
+/build
+*.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# Archivos JS compilados en src (si se generan accidentalmente)
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts.map
+
+# ============================================
+# Prisma Generated Files
+# ============================================
+# Solo ignorar archivos generados por Prisma Client
+/generated
+# NOTA: Las migraciones SQL (prisma/migrations/*.sql) SÍ deben estar en el repo
+
+# ============================================
+# Hardhat / Blockchain Build Artifacts
+# ============================================
+/artifacts
+/cache
+/ignition
+/typechain-types
+*.sol.js
+*.sol.ts
+
+# ============================================
+# Environment Variables
+# ============================================
+.env
+.env.*
+!.env.example
+!.env.template
+
+# ============================================
+# Testing & Coverage
+# ============================================
+/coverage
+.nyc_output
+*.lcov
+.jest/
+
+# ============================================
+# Logs & Temporary Files
+# ============================================
+/logs
 *.log
 npm-debug.log*
-pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+/temp
+/tmp
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
 
-# OS
-.DS_Store
-
-# Tests
-/coverage
-/.nyc_output
-
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
-
-# IDE - VSCode
-.vscode/*
+# ============================================
+# IDE & Editor Files
+# ============================================
+# VSCode
+.vscode/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+# IntelliJ IDEA / WebStorm
+.idea/
+*.iml
+*.iws
+*.ipr
 
-# temp directory
-.temp
-.tmp
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
 
-# Runtime data
-pids
+# Vim
+*.swp
+*.swo
+*.swn
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================
+# OS Generated Files
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ============================================
+# Backup Files
+# ============================================
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+
+# ============================================
+# Database Files
+# ============================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# ============================================
+# Docker
+# ============================================
+.dockerignore
+
+# ============================================
+# Misc
+# ============================================
 *.pid
 *.seed
 *.pid.lock
-
-# Diagnostic reports (https://nodejs.org/api/report.html)
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-
-/generated/prisma
+.eslintcache
+.stylelintcache
+.cache/

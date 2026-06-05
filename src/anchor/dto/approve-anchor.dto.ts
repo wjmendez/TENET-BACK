@@ -8,8 +8,8 @@ export class ApproveAnchorDto {
   @IsString({ each: true })
   certificateIds: string[];
 
-  @ApiProperty({ example: 'sepolia' })
+  @ApiProperty({ example: 'besu', description: 'Blockchain network: sepolia, besu, local, testnet' })
   @IsString()
-  @IsIn(['sepolia', 'testnet'])
+  @IsIn(['sepolia', 'besu', 'local', 'testnet'])
   blockchain: string;
 }
