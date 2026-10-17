@@ -9,7 +9,7 @@ Requisitos: Node 22, Docker (con Compose).
 
 ```bash
 cp .env.example .env              # luego editar JWT_SECRET y LOCAL_KMS_MASTER_KEY
-docker compose up -d              # postgres :5432, redis :6379, minio :9000/:9001
+docker compose up -d              # postgres :5432 y redis :6379 (MinIO opcional: --profile storage)
 npm install
 npx prisma migrate deploy         # aplica las migraciones
 npx prisma db seed                # tenant "default", planes, verticales y usuario admin
