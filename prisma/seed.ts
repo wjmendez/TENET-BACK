@@ -195,47 +195,6 @@ async function main() {
       update: {},
     });
 
-    // 0.2 Backfill tenantId para datos existentes
-    await prisma.vertical.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.issuer.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.template.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.credentialType.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.certificate.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.credentialBundle.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.anchor.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.nFT.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.credentialUpdate.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
-    await prisma.revocation.updateMany({
-      where: { tenantId: null },
-      data: { tenantId: defaultTenantId },
-    });
     // 0. Crear catalogo de redes
     console.log('🌐 Creando catalogo de redes...');
     const chainNetworks = [
