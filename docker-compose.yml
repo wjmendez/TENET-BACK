@@ -5,7 +5,8 @@ services:
       POSTGRES_DB: certs
       POSTGRES_USER: certs_user
       POSTGRES_PASSWORD: secret
-    ports: ["5432:5432"]
+    # Puerto de host configurable (POSTGRES_PORT en .env) por si 5432 ya está ocupado
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
