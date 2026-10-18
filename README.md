@@ -16,6 +16,8 @@ npx prisma db seed                # tenant "default", planes, verticales y usuar
 npm run start:dev                 # http://localhost:3100
 ```
 
+- `npm install` ejecuta `prisma generate` (postinstall); si el seed dice "@prisma/client did not initialize yet", corré `npx prisma generate`.
+- Si el puerto 5432 ya está ocupado (otro Postgres, WSL): en `.env` poné `POSTGRES_PORT=5433` y el mismo puerto en `DATABASE_URL`.
 - Swagger: http://localhost:3100/docs
 - Login de desarrollo (viene del seed, ver `DEFAULT_ADMIN_*` en `.env`): `admin@certiflow.local` / `ChangeMe123!`
 - Probar el login:
